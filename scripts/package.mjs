@@ -18,7 +18,7 @@ import { chmod, copyFile, cp, mkdir, readFile, rm, stat, writeFile } from 'node:
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { OFFICIAL_KEYS, privateKeyFromSeed, signPackage, verifyPackage } from './package-signature.mjs';
+import { keyIDFor, OFFICIAL_KEYS, privateKeyFromSeed, signPackage, verifyPackage } from './package-signature.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const BINARY = 'lithe-database-backend';
@@ -59,8 +59,10 @@ const flags = new Set(process.argv.slice(2));
 for (const flag of flags) {
   if (!['--sign', '--host-only'].includes(flag)) throw new Error(`Unknown option ${flag}`);
 }
-// Read the key before building, so a missing secret fails in seconds.
+// Read and match the key before building, so a missing or wrong secret
+// fails in seconds.
 const privateKey = flags.has('--sign') ? privateKeyFromSeed(await readStdin()) : null;
+if (privateKey) keyIDFor(privateKey, OFFICIAL_KEYS);
 
 const manifest = JSON.parse(await readFile(join(root, 'plugin.json'), 'utf8'));
 const { id, version } = manifest;

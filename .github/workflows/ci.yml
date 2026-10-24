@@ -1,0 +1,108 @@
+# Checks every pull request and push to main. Nothing here can read the
+# publisher key: it lives only in the protected `release` environment, which
+# only release.yml uses, so packages built here are unsigned.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ui:
+    name: Page and signing scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install page dependencies
+        working-directory: ui
+        run: npm ci
+      - name: Type-check, test, and bundle the page
+        working-directory: ui
+        run: |
+          npm run check
+          npm test
+          npm run build
+      - name: Test the publisher signature format
+        run: node --test scripts/package-signature.test.mjs
+
+  backend:
+    name: Backend
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/target
+          key: backend-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/Cargo.lock') }}
+      - name: Format, lint, and test
+        working-directory: backend
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+
+  package:
+    name: Package and end-to-end check
+    needs: [ui, backend]
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/target
+            .artifacts/lithe/rust/target
+          key: package-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/Cargo.lock', 'e2e/lithe-core.json') }}
+      - name: Build the universal package
+        run: |
+          npm ci --prefix ui
+          node scripts/package.mjs
+      - name: Run the backend through Rust Core
+        run: node scripts/e2e.mjs
+      - name: Check the archive holds the package
+        run: |
+          id=$(node -p "require('./plugin.json').id")
+          mkdir -p dist/verify
+          ditto -x -k dist/*-macos.zip dist/verify
+          diff -r "dist/$id" "dist/verify/$id"
+          test "$(lipo -archs "dist/verify/$id/bin/lithe-database-backend")" = "x86_64 arm64"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: unsigned-package
+          path: |
+            dist/*-macos.zip
+            dist/*-macos.zip.sha256
+          retention-days: 7

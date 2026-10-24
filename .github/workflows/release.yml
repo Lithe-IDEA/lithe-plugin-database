@@ -1,0 +1,69 @@
+# Publishes a signed release for each `v<version>` tag whose version matches
+# plugin.json. The publisher key is a secret of the `release` environment,
+# which only `v*` tags may deploy to and which requires a maintainer's
+# approval, so neither pull requests nor branches can ever read it. Listing
+# the release in Lithe's marketplace index is a pull request to Lithe.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release ${{ github.ref_name }}
+    runs-on: macos-26
+    timeout-minutes: 60
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Require the tag to match plugin.json
+        run: test "v$(node -p "require('./plugin.json').version")" = "$GITHUB_REF_NAME"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - name: Test
+        run: |
+          npm ci --prefix ui
+          npm --prefix ui run check
+          npm --prefix ui test
+          node --test scripts/package-signature.test.mjs
+          cargo test --locked --manifest-path backend/Cargo.toml
+      - name: Build and sign the package
+        env:
+          LITHE_PLUGIN_PACKAGE_PRIVATE_KEY: ${{ secrets.LITHE_PLUGIN_PACKAGE_PRIVATE_KEY }}
+        run: |
+          test -n "$LITHE_PLUGIN_PACKAGE_PRIVATE_KEY" || { echo "Configure LITHE_PLUGIN_PACKAGE_PRIVATE_KEY in the release environment"; exit 1; }
+          # The key reaches the script on stdin, never in a command line or file.
+          printf '%s' "$LITHE_PLUGIN_PACKAGE_PRIVATE_KEY" | node scripts/package.mjs --sign
+      - name: Run the signed backend through Rust Core
+        run: node scripts/e2e.mjs
+      - name: Verify the archive users download
+        run: |
+          id=$(node -p "require('./plugin.json').id")
+          mkdir -p dist/verify
+          ditto -x -k dist/*-macos.zip dist/verify
+          node scripts/package-signature.mjs verify "dist/verify/$id"
+          test "$(lipo -archs "dist/verify/$id/bin/lithe-database-backend")" = "x86_64 arm64"
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          archive=$(ls dist/*-macos.zip)
+          gh release create "$GITHUB_REF_NAME" "$archive" "$archive.sha256" \
+            --verify-tag \
+            --title "Database $GITHUB_REF_NAME" \
+            --notes "Official Lithe database plugin $GITHUB_REF_NAME for macOS (Apple silicon and Intel). SHA-256: $(cat "$archive.sha256")"

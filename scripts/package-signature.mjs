@@ -103,7 +103,7 @@ async function readManifest(root) {
 }
 
 /** The key ID among `trustedKeys` that owns `privateKey`. */
-function keyIDFor(privateKey, trustedKeys) {
+export function keyIDFor(privateKey, trustedKeys) {
   const publicKey = rawPublicKey(privateKey);
   const keyID = Object.keys(trustedKeys).sort().find(id => trustedKeys[id] === publicKey);
   if (!keyID) throw new Error('The private key does not belong to a key Lithe trusts.');
