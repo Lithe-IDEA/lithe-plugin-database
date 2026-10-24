@@ -54,22 +54,12 @@ pub(crate) async fn nacos_method_with_client(
             nacos_get_config(client, connection, &params.data_id, &params.group).await
         }
         "nacosPublishConfig" => {
-            ensure_specialized_write(
-                connection,
-                "Publish Nacos configuration",
-                params.confirmed,
-                params.allow_write,
-            )?;
+            ensure_specialized_write(connection, "Publish Nacos configuration", params.confirmed)?;
             nacos_publish_config(client, connection, params).await?;
             Ok(json!({}))
         }
         "nacosDeleteConfig" => {
-            ensure_specialized_write(
-                connection,
-                "Delete Nacos configuration",
-                params.confirmed,
-                params.allow_write,
-            )?;
+            ensure_specialized_write(connection, "Delete Nacos configuration", params.confirmed)?;
             nacos_delete_config(client, connection, params).await?;
             Ok(json!({}))
         }

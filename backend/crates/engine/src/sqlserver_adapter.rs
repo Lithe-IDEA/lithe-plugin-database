@@ -6,9 +6,9 @@ use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 use super::{
-    ensure_mutations_allowed, ensure_transaction_allowed, ensure_write_allowed, open_ssh_tunnel,
-    parse_csv, parse_json, scalar_string, validate_identifier, Connection, DbResult, Filter,
-    Mutation, Params, Sort,
+    ensure_mutations_allowed, ensure_query_allowed, ensure_transaction_allowed,
+    ensure_write_allowed, open_ssh_tunnel, parse_csv, parse_json, scalar_string,
+    validate_identifier, Connection, DbResult, Filter, Mutation, Params, Sort,
 };
 
 type SqlServerClient = Client<Compat<TcpStream>>;
@@ -52,32 +52,33 @@ pub(super) async fn method(method: &str, params: Params) -> DbResult {
         "listObjects" => list_objects(&mut client, &params.object_kind).await,
         "pageTable" => page_table(&mut client, &params).await,
         "query" => {
+            ensure_query_allowed(&connection, &params.sql, params.confirmed)?;
             if !params.values.is_empty() {
                 return Err(("unsupported_parameters".into(), "SQL Server parameter values are not available in this version.".into()));
             }
             query(&mut client, &params.sql, params.limit.clamp(1, 10_000) as usize).await
         }
         "execute" => {
-            ensure_write_allowed(&connection, &params.sql, params.confirmed, params.allow_write)?;
+            ensure_write_allowed(&connection, &params.sql, params.confirmed)?;
             execute(&mut client, &params.sql).await
         }
         "applyChanges" => {
-            ensure_mutations_allowed(&connection, &params.mutations, params.confirmed, params.allow_write)?;
+            ensure_mutations_allowed(&connection, &params.mutations, params.confirmed)?;
             apply_changes(&mut client, &params.mutations).await
         }
         "schemaChange" => {
-            ensure_write_allowed(&connection, "ALTER TABLE", params.confirmed, params.allow_write)?;
+            ensure_write_allowed(&connection, "ALTER TABLE", params.confirmed)?;
             let sql = schema_change_sql(&params)?;
             execute(&mut client, &sql).await
         }
         "transaction" => {
-            ensure_transaction_allowed(&connection, &params.statements, params.confirmed, params.allow_write)?;
+            ensure_transaction_allowed(&connection, &params.statements, params.confirmed)?;
             run_transaction(&mut client, &params).await
         }
         "exportCsv" => export_csv(&mut client, &params.sql, params.limit).await,
         "exportJson" => export_json(&mut client, &params.sql, params.limit).await,
         "importCsv" | "importJson" => {
-            ensure_write_allowed(&connection, "INSERT", params.confirmed, params.allow_write)?;
+            ensure_write_allowed(&connection, "INSERT", params.confirmed)?;
             import_data(&mut client, &params, method == "importCsv").await
         }
         "diagnostics" if params.diagnostic_kind == "tableSize" => query(

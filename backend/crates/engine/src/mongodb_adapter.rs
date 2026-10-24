@@ -67,21 +67,11 @@ pub(super) async fn method(method: &str, params: Params) -> DbResult {
         "pageTable" => page_collection(&database, &params).await,
         "query" => find_json(&database, &params).await,
         "applyChanges" => {
-            ensure_mutations_allowed(
-                &connection,
-                &params.mutations,
-                params.confirmed,
-                params.allow_write,
-            )?;
+            ensure_mutations_allowed(&connection, &params.mutations, params.confirmed)?;
             apply_changes(&database, &params.mutations).await
         }
         "execute" => {
-            ensure_write_allowed(
-                &connection,
-                &params.sql,
-                params.confirmed,
-                params.allow_write,
-            )?;
+            ensure_write_allowed(&connection, &params.sql, params.confirmed)?;
             Err((
                 "unsupported_operation".into(),
                 "Use the MongoDB collection editor for document writes.".into(),

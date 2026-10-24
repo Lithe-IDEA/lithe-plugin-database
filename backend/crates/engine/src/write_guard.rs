@@ -7,14 +7,21 @@ pub(crate) fn ensure_write_allowed(
     connection: &Connection,
     sql: &str,
     confirmed: bool,
-    allow_write: bool,
 ) -> Result<(), (String, String)> {
-    if connection.read_only && !allow_write {
+    if connection.read_only {
         return Err((
             "read_only".into(),
             "This connection is configured as read-only".into(),
         ));
     }
+    ensure_dangerous_sql_confirmed(connection, sql, confirmed)
+}
+
+fn ensure_dangerous_sql_confirmed(
+    connection: &Connection,
+    sql: &str,
+    confirmed: bool,
+) -> Result<(), (String, String)> {
     if connection.production_protection && is_dangerous_sql(&connection.kind, sql) && !confirmed {
         return Err((
             "confirmation_required".into(),
@@ -28,9 +35,8 @@ pub(crate) fn ensure_mutations_allowed(
     connection: &Connection,
     mutations: &[Mutation],
     confirmed: bool,
-    allow_write: bool,
 ) -> Result<(), (String, String)> {
-    if connection.read_only && !allow_write {
+    if connection.read_only {
         return Err((
             "read_only".into(),
             "This connection is configured as read-only".into(),
@@ -52,9 +58,8 @@ pub(crate) fn ensure_transaction_allowed(
     connection: &Connection,
     statements: &[Statement],
     confirmed: bool,
-    allow_write: bool,
 ) -> Result<(), (String, String)> {
-    if connection.read_only && !allow_write {
+    if connection.read_only {
         return Err((
             "read_only".into(),
             "This connection is configured as read-only".into(),
@@ -72,6 +77,53 @@ pub(crate) fn ensure_transaction_allowed(
         ));
     }
     Ok(())
+}
+
+/// Guards the methods that run SQL as a read (`query`, `explain`). Which
+/// method runs a statement is the client's choice, so the guards cannot
+/// trust it: a read-only connection runs only statements that read, and
+/// production protection asks before a dangerous one, as `execute` does.
+pub(crate) fn ensure_query_allowed(
+    connection: &Connection,
+    sql: &str,
+    confirmed: bool,
+) -> Result<(), (String, String)> {
+    if connection.read_only
+        && !sql_statements(&connection.kind, sql)
+            .iter()
+            .all(|statement| statement.is_empty() || statement_only_reads(statement))
+    {
+        return Err((
+            "read_only".into(),
+            "This connection is configured as read-only".into(),
+        ));
+    }
+    ensure_dangerous_sql_confirmed(connection, sql, confirmed)
+}
+
+/// Whether a statement only reads: it starts with a reading verb and holds
+/// no writing keyword anywhere, which catches writes in CTEs (`WITH d AS
+/// (DELETE ...)`), `SELECT ... INTO`, and `EXPLAIN ANALYZE`, which runs the
+/// statement it explains. A column named like a keyword must be quoted.
+fn statement_only_reads(tokens: &[SqlToken]) -> bool {
+    const READING_VERBS: &[&str] = &[
+        "SELECT", "WITH", "SHOW", "EXPLAIN", "DESCRIBE", "DESC", "VALUES", "TABLE",
+    ];
+    const WRITING_WORDS: &[&str] = &[
+        "INSERT", "UPDATE", "DELETE", "MERGE", "UPSERT", "REPLACE", "DROP", "CREATE", "ALTER",
+        "TRUNCATE", "RENAME", "GRANT", "REVOKE", "CALL", "EXEC", "EXECUTE", "COPY", "LOAD", "INTO",
+        "LOCK", "ATTACH", "DETACH", "VACUUM", "REINDEX", "ANALYZE", "RESTORE",
+    ];
+    let starts_reading = matches!(tokens.first(), Some(SqlToken::Word(word)) if READING_VERBS.contains(&word.as_str()));
+    starts_reading
+        && !tokens.iter().enumerate().any(|(index, token)| match token {
+            // REPLACE(...) and TRUNCATE(...) are also string and number functions.
+            SqlToken::Word(word) if matches!(word.as_str(), "REPLACE" | "TRUNCATE") => {
+                tokens.get(index + 1) != Some(&SqlToken::Open)
+            }
+            SqlToken::Word(word) => WRITING_WORDS.contains(&word.as_str()),
+            _ => false,
+        })
 }
 
 /// Decides whether production protection must ask before running `sql`.

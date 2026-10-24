@@ -36,32 +36,17 @@ pub(crate) async fn redis_method_with_connection(
         "redisScan" => redis_scan(&mut redis, params, connection).await,
         "redisGetKey" => redis_get_key(&mut redis, &params.key, connection).await,
         "redisSetString" => {
-            ensure_specialized_write(
-                connection,
-                "Update Redis key",
-                params.confirmed,
-                params.allow_write,
-            )?;
+            ensure_specialized_write(connection, "Update Redis key", params.confirmed)?;
             redis_set_string(&mut redis, params, connection).await?;
             Ok(json!({}))
         }
         "redisReplaceHash" => {
-            ensure_specialized_write(
-                connection,
-                "Update Redis hash",
-                params.confirmed,
-                params.allow_write,
-            )?;
+            ensure_specialized_write(connection, "Update Redis hash", params.confirmed)?;
             redis_replace_hash(&mut redis, params, connection).await?;
             Ok(json!({}))
         }
         "redisDeleteKey" => {
-            ensure_specialized_write(
-                connection,
-                "Delete Redis key",
-                params.confirmed,
-                params.allow_write,
-            )?;
+            ensure_specialized_write(connection, "Delete Redis key", params.confirmed)?;
             require_nonempty(&params.key, "Redis key")?;
             let _: i64 = redis::cmd("DEL")
                 .arg(&params.key)
@@ -71,12 +56,7 @@ pub(crate) async fn redis_method_with_connection(
             Ok(json!({}))
         }
         "redisRenameKey" => {
-            ensure_specialized_write(
-                connection,
-                "Rename Redis key",
-                params.confirmed,
-                params.allow_write,
-            )?;
+            ensure_specialized_write(connection, "Rename Redis key", params.confirmed)?;
             require_nonempty(&params.key, "Redis key")?;
             require_nonempty(&params.new_key, "New Redis key")?;
             let _: String = redis::cmd("RENAME")
@@ -88,12 +68,7 @@ pub(crate) async fn redis_method_with_connection(
             Ok(json!({}))
         }
         "redisSetTTL" => {
-            ensure_specialized_write(
-                connection,
-                "Update Redis TTL",
-                params.confirmed,
-                params.allow_write,
-            )?;
+            ensure_specialized_write(connection, "Update Redis TTL", params.confirmed)?;
             require_nonempty(&params.key, "Redis key")?;
             let ttl = params
                 .ttl
@@ -121,12 +96,7 @@ pub(crate) async fn redis_method_with_connection(
             Ok(json!({}))
         }
         "redisFlushDatabase" => {
-            ensure_specialized_write(
-                connection,
-                "Clear Redis database",
-                params.confirmed,
-                params.allow_write,
-            )?;
+            ensure_specialized_write(connection, "Clear Redis database", params.confirmed)?;
             let _: String = redis::cmd("FLUSHDB")
                 .query_async(&mut redis)
                 .await

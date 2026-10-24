@@ -53,6 +53,7 @@ pub(crate) async fn sql_database_method(method: &str, params: Params) -> DbResul
         "listForeignKeys" => list_foreign_keys(&pool, kind, &params.schema, &params.table).await,
         "listObjects" => list_objects(&pool, kind, &params.schema, &params.object_kind).await,
         "query" => {
+            ensure_query_allowed(&connection, &params.sql, params.confirmed)?;
             query_direct(
                 direct.as_ref().unwrap(),
                 &params.sql,
@@ -63,21 +64,11 @@ pub(crate) async fn sql_database_method(method: &str, params: Params) -> DbResul
         }
         "pageTable" => page_table(&pool, direct.as_ref().unwrap(), kind, &params).await,
         "execute" => {
-            ensure_write_allowed(
-                &connection,
-                &params.sql,
-                params.confirmed,
-                params.allow_write,
-            )?;
+            ensure_write_allowed(&connection, &params.sql, params.confirmed)?;
             execute(&pool, &params.sql, &params.values).await
         }
         "applyChanges" => {
-            ensure_mutations_allowed(
-                &connection,
-                &params.mutations,
-                params.confirmed,
-                params.allow_write,
-            )?;
+            ensure_mutations_allowed(&connection, &params.mutations, params.confirmed)?;
             apply_changes(
                 direct.as_ref().unwrap(),
                 kind,
@@ -87,23 +78,16 @@ pub(crate) async fn sql_database_method(method: &str, params: Params) -> DbResul
             .await
         }
         "schemaChange" => {
-            ensure_write_allowed(
-                &connection,
-                "ALTER TABLE",
-                params.confirmed,
-                params.allow_write,
-            )?;
+            ensure_write_allowed(&connection, "ALTER TABLE", params.confirmed)?;
             schema_change(direct.as_ref().unwrap(), kind, &params).await
         }
-        "explain" => explain(&pool, kind, &params.sql, &params.explain_format).await,
+        "explain" => {
+            ensure_query_allowed(&connection, &params.sql, params.confirmed)?;
+            explain(&pool, kind, &params.sql, &params.explain_format).await
+        }
         "diagnostics" => diagnostics(&pool, kind, &params).await,
         "transaction" => {
-            ensure_transaction_allowed(
-                &connection,
-                &params.statements,
-                params.confirmed,
-                params.allow_write,
-            )?;
+            ensure_transaction_allowed(&connection, &params.statements, params.confirmed)?;
             run_transaction(direct.as_ref().unwrap(), kind, &params.statements).await
         }
         "exportCsv" => {
@@ -125,7 +109,7 @@ pub(crate) async fn sql_database_method(method: &str, params: Params) -> DbResul
             .await
         }
         "importCsv" => {
-            ensure_write_allowed(&connection, "INSERT", params.confirmed, params.allow_write)?;
+            ensure_write_allowed(&connection, "INSERT", params.confirmed)?;
             import_data(
                 direct.as_ref().unwrap(),
                 kind,
@@ -137,7 +121,7 @@ pub(crate) async fn sql_database_method(method: &str, params: Params) -> DbResul
             .await
         }
         "importJson" => {
-            ensure_write_allowed(&connection, "INSERT", params.confirmed, params.allow_write)?;
+            ensure_write_allowed(&connection, "INSERT", params.confirmed)?;
             import_data(
                 direct.as_ref().unwrap(),
                 kind,
@@ -166,19 +150,19 @@ pub(crate) async fn sql_database_method(method: &str, params: Params) -> DbResul
             .await
         }
         "importSql" => {
-            ensure_write_allowed(&connection, "RESTORE", params.confirmed, params.allow_write)?;
+            ensure_write_allowed(&connection, "RESTORE", params.confirmed)?;
             import_sql(&pool, &params.data).await
         }
         "importSqlFile" => {
-            ensure_write_allowed(&connection, "RESTORE", params.confirmed, params.allow_write)?;
+            ensure_write_allowed(&connection, "RESTORE", params.confirmed)?;
             import_sql_file(&pool, &params.output_path).await
         }
         "restoreSql" => {
-            ensure_write_allowed(&connection, "RESTORE", params.confirmed, params.allow_write)?;
+            ensure_write_allowed(&connection, "RESTORE", params.confirmed)?;
             restore_sql(&pool, kind, &params.schema, &params.data).await
         }
         "restoreSqlFile" => {
-            ensure_write_allowed(&connection, "RESTORE", params.confirmed, params.allow_write)?;
+            ensure_write_allowed(&connection, "RESTORE", params.confirmed)?;
             restore_sql_file(&pool, kind, &params.schema, &params.output_path).await
         }
         _ => Err(("unknown_method".into(), format!("Unknown method: {method}"))),

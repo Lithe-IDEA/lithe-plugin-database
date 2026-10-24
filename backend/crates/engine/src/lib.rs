@@ -99,8 +99,6 @@ struct Params {
     #[serde(default = "default_true")]
     include_data: bool,
     #[serde(default)]
-    allow_write: bool,
-    #[serde(default)]
     confirmed: bool,
     #[serde(default)]
     operation: String,
@@ -300,9 +298,8 @@ fn ensure_specialized_write(
     connection: &Connection,
     action: &str,
     confirmed: bool,
-    allow_write: bool,
 ) -> Result<(), (String, String)> {
-    if connection.read_only && !allow_write {
+    if connection.read_only {
         return Err(("read_only".into(), "This connection is read-only".into()));
     }
     if connection.production_protection && !confirmed {
@@ -555,6 +552,38 @@ mod tests {
             .unwrap();
             assert_eq!(connection.proxy_url, "ssh -W %h:%p bastion", "{key}");
         }
+    }
+
+    #[tokio::test]
+    async fn read_only_connections_refuse_writes_whatever_the_params_say() {
+        // Params come from the plugin's page; no param may lift read-only.
+        install_drivers();
+        let directory =
+            std::env::temp_dir().join(format!("lithe-engine-read-only-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("data.sqlite");
+        let request = |read_only: bool, sql: &str| {
+            json!({
+                "connection": { "kind": "sqlite", "path": path, "readOnly": read_only },
+                "sql": sql,
+                "confirmed": true,
+                "allowWrite": true,
+            })
+        };
+        let outcome = tokio::time::timeout(Duration::from_secs(5), async {
+            let refused = dispatch("execute", request(true, "CREATE TABLE t (x INTEGER)")).await;
+            let tables = dispatch(
+                "query",
+                request(false, "SELECT name FROM sqlite_master WHERE type = 'table'"),
+            )
+            .await;
+            (refused, tables)
+        })
+        .await;
+        let _ = std::fs::remove_dir_all(&directory);
+        let (refused, tables) = outcome.expect("SQLite answers within 5 s");
+        assert_eq!(refused.unwrap_err().0, "read_only");
+        assert_eq!(tables.unwrap()["rows"], json!([]));
     }
 
     #[tokio::test]
@@ -829,6 +858,51 @@ mod tests {
     }
 
     #[test]
+    fn statements_sent_as_queries_are_guarded_like_executes() {
+        let connection = |read_only: bool, production_protection: bool| -> Connection {
+            serde_json::from_value(json!({
+                "kind": "postgresql",
+                "readOnly": read_only,
+                "productionProtection": production_protection,
+            }))
+            .unwrap()
+        };
+        let code = |connection: &Connection, sql: &str| {
+            ensure_query_allowed(connection, sql, false)
+                .err()
+                .map(|(code, _)| code)
+        };
+        let read_only = connection(true, false);
+        for sql in [
+            "SELECT * FROM users WHERE note = 'DELETE FROM users'",
+            "select replace(name, 'a', 'b'), truncate(price, 2) from items;",
+            "WITH recent AS (SELECT * FROM events) SELECT \"update\" FROM recent",
+            "SHOW TABLES",
+            "EXPLAIN SELECT 1; -- DROP TABLE users",
+        ] {
+            assert_eq!(code(&read_only, sql), None, "{sql}");
+        }
+        for sql in [
+            "WITH gone AS (DELETE FROM users WHERE id = 1 RETURNING *) SELECT * FROM gone",
+            "SELECT * INTO backup FROM users",
+            "EXPLAIN ANALYZE UPDATE users SET name = 'x' WHERE id = 1",
+            "SELECT 1; INSERT INTO users VALUES (1)",
+            "PRAGMA journal_mode = WAL",
+            "SELECT * FROM users FOR UPDATE",
+        ] {
+            assert_eq!(code(&read_only, sql).as_deref(), Some("read_only"), "{sql}");
+        }
+        let production = connection(false, true);
+        let hidden = "WITH gone AS (DELETE FROM users RETURNING *) SELECT * FROM gone";
+        assert_eq!(
+            code(&production, hidden).as_deref(),
+            Some("confirmation_required")
+        );
+        assert!(ensure_query_allowed(&production, hidden, true).is_ok());
+        assert_eq!(code(&production, "SELECT * FROM users"), None);
+    }
+
+    #[test]
     fn redis_and_nacos_writes_answer_with_the_sql_guard_codes() {
         // The page retries any `confirmation_required` after the user
         // confirms, so every write path must use the same codes.
@@ -841,7 +915,7 @@ mod tests {
             .unwrap()
         };
         let code = |connection: &Connection, confirmed: bool| {
-            ensure_specialized_write(connection, "Saving", confirmed, false)
+            ensure_specialized_write(connection, "Saving", confirmed)
                 .err()
                 .map(|(code, _)| code)
         };

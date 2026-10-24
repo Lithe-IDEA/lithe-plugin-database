@@ -256,29 +256,27 @@ export function Console({ tab }: { tab: Extract<Tab, { kind: 'console' }> }) {
         append([{ time: clock(), text: range.text, tone: 'sql' }]);
         const started = performance.now();
         try {
-          let value: unknown;
-          if (usesQueryEndpoint(kind)) {
-            const call = dbCall<QueryResult>(target, 'query', { sql: range.text, values: [], limit: QUERY_LIMIT });
-            currentCall.current = call;
-            value = await call.result;
-          } else {
-            value = await withConfirmation(
-              async isConfirmed => {
-                const call = dbCall(target, 'execute', { sql: range.text, values: [], limit: 200, confirmed: isConfirmed });
-                currentCall.current = call;
-                const result = await call.result;
-                if (isConfirmed) confirmed = true;
-                return result;
-              },
-              { title: t('Run statement?'), message: range.text.slice(0, 600) },
-              confirmed,
-            );
-            if (value === undefined) {
-              append([{ time: clock(), text: t('Cancelled.'), tone: 'info' }]);
-              break;
-            }
-            mutated = true;
+          // The engine guards both methods itself: a statement that reads
+          // but hides a dangerous write (WITH d AS (DELETE ...)) still asks.
+          const reads = usesQueryEndpoint(kind);
+          const value = await withConfirmation(
+            async isConfirmed => {
+              const call = reads
+                ? dbCall<QueryResult>(target, 'query', { sql: range.text, values: [], limit: QUERY_LIMIT, confirmed: isConfirmed })
+                : dbCall(target, 'execute', { sql: range.text, values: [], limit: 200, confirmed: isConfirmed });
+              currentCall.current = call;
+              const result = await call.result;
+              if (isConfirmed) confirmed = true;
+              return result;
+            },
+            { title: t('Run statement?'), message: range.text.slice(0, 600) },
+            confirmed,
+          );
+          if (value === undefined) {
+            append([{ time: clock(), text: t('Cancelled.'), tone: 'info' }]);
+            break;
           }
+          if (!reads) mutated = true;
           const duration = Math.round(performance.now() - started);
           const result = value as QueryResult & { rowsAffected?: number };
           if (Array.isArray(result?.rows)) {
