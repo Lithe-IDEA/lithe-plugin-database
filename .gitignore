@@ -1,0 +1,6 @@
+backend/target/
+ui/node_modules/
+ui/dist/
+dist/
+.artifacts/
+.DS_Store
