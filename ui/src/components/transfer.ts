@@ -65,6 +65,24 @@ export async function backUpDatabase(profile: Profile, database: string | undefi
   }
 }
 
+export async function backUpTable(profile: Profile, database: string | undefined, table: string): Promise<void> {
+  const outputPath = await chooseFile('save', { title: t('Back Up {table} as SQL', { table }), suggestedName: `${table}.sql`, extensions: ['sql'] });
+  if (!outputPath) return;
+  try {
+    const result = await dbIn<{ byteCount?: number }>(scopeOf(profile, database), 'exportSqlToFile', {
+      schema: '',
+      selectedTables: [table],
+      includeStructure: true,
+      includeData: true,
+      limit: 0,
+      outputPath,
+    });
+    notify(t('Exported {size} to {path}.', { size: formatBytes(result.byteCount ?? 0), path: outputPath }));
+  } catch (error) {
+    notify(failure(error), 'error');
+  }
+}
+
 export async function restoreDatabase(profile: Profile, database: string | undefined): Promise<void> {
   const outputPath = await chooseFile('open', { title: t('Import SQL Backup'), extensions: ['sql'] });
   if (!outputPath) return;

@@ -11,6 +11,7 @@ import { NacosView } from './NacosView.tsx';
 import { HistoryView } from './HistoryView.tsx';
 import { Overview } from './Overview.tsx';
 import { Splitter } from './Splitter.tsx';
+import { MenuHost } from './Menu.tsx';
 
 export function App() {
   const status = useStore(state => state.status);
@@ -33,6 +34,7 @@ export function App() {
         <Workspace />
       </Splitter>
       <Dialogs />
+      <MenuHost />
       <div class="notices" role="status">
         {notices.map(notice => (
           <div key={notice.id} class={`notice ${notice.tone}`}>
