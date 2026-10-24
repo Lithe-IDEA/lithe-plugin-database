@@ -129,6 +129,14 @@ export const indexName = (row: Row) => field(row, 'index_name', 'INDEX_NAME', 'n
 
 export const foreignKeyName = (row: Row) => field(row, 'constraint_name', 'CONSTRAINT_NAME', 'id');
 
+/**
+ * The identity of a result's shape. Views rebuild their column arrays on
+ * every render, so a grid compares names, not arrays, to tell a new result.
+ */
+export function columnsKey(columns: string[]): string {
+  return JSON.stringify(columns);
+}
+
 /** Tab-separated rows, as spreadsheets paste them. */
 export function toTSV(columns: string[], rows: Row[], header = false): string {
   const clean = (value: string) => value.replace(/[\t\r\n]+/g, ' ');

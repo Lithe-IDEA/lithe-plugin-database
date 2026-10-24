@@ -949,7 +949,16 @@ where
         let value = if raw.is_null() {
             Value::Null
         } else {
-            decode(row, index, column.type_info().name())
+            // SQLite expression columns (`SELECT 1`) declare no type; their
+            // value's own storage class decides. A declared type still wins,
+            // so a BOOLEAN column stays a boolean.
+            let declared = column.type_info();
+            let kind = if declared.is_null() {
+                raw.type_info().name().to_string()
+            } else {
+                declared.name().to_string()
+            };
+            decode(row, index, &kind)
         };
         object.insert(column.name().to_string(), value);
     }

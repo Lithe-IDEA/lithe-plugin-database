@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "io.github.lithe-idea.database",
   "displayName": "Database",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "pluginAPIVersion": 3,
   "requires": { "backend": 1, "serverProcess": 1, "ui": 2 },
   "vendor": {

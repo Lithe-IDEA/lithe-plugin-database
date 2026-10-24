@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { Row } from '../api.ts';
 import { t } from '../i18n.ts';
-import { displayValue, editableText, parseTSV, toTSV } from '../values.ts';
+import { columnsKey, displayValue, editableText, parseTSV, toTSV } from '../values.ts';
 import { copyToClipboard } from './clipboard.ts';
 import { showMenu, type MenuEntry } from './Menu.tsx';
 
@@ -62,12 +62,15 @@ export function DataGrid(props: GridProps) {
     return () => observer.disconnect();
   }, []);
 
-  // A new result starts at the top with nothing selected.
+  // A new result starts with nothing selected. Its key is the column names:
+  // parents pass a fresh array on each render, and a click that selects a row
+  // re-renders the parent, which must not drop the cell being edited.
+  const resultKey = columnsKey(props.columns);
   useEffect(() => {
     setActive(null);
     setEditing(null);
     if (!props.selectedRows) setInternalSelection([]);
-  }, [props.columns]);
+  }, [resultKey]);
 
   const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
   const last = Math.min(props.rows.length, Math.ceil((scrollTop + height) / ROW_HEIGHT) + OVERSCAN);

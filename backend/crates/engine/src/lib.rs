@@ -587,6 +587,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sqlite_expression_columns_keep_their_values() {
+        // `SELECT 1` declares no column type; the console showed "<unsupported>".
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect("sqlite::memory:")
+                .await
+                .unwrap();
+            sqlx::query("CREATE TABLE flags (done BOOLEAN)")
+                .execute(&pool)
+                .await
+                .unwrap();
+            sqlx::query("INSERT INTO flags VALUES (1)")
+                .execute(&pool)
+                .await
+                .unwrap();
+            let expressions = sqlx::query(
+                "SELECT 1 AS i, 2.5 AS r, 'x' AS t, x'00ff' AS b, NULL AS n, 1 + 1 AS sum",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            let declared = sqlx::query("SELECT done FROM flags")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            let expressions = sql_adapter::sqlite_row_json(&expressions).unwrap();
+            let declared = sql_adapter::sqlite_row_json(&declared).unwrap();
+            pool.close().await;
+            assert_eq!(
+                expressions,
+                json!({"i": 1, "r": 2.5, "t": "x", "b": {"binary": "AP8="}, "n": null, "sum": 2})
+            );
+            // A declared type still decides when there is one.
+            assert_eq!(declared, json!({"done": true}));
+        })
+        .await
+        .expect("SQLite expression test exceeded its local deadline");
+    }
+
+    #[tokio::test]
     async fn sqlite_metadata_preserves_primary_key_ordinals() {
         sqlx::any::install_default_drivers();
         // In-memory metadata protects both the grid icon and keyed mutations.

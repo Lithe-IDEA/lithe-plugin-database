@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { columnsOf, displayValue, parseTSV, toTSV, typedValue } from './values.ts';
+import { columnsKey, columnsOf, displayValue, parseTSV, toTSV, typedValue } from './values.ts';
 
 test('values display as the former grid showed them', () => {
   assert.equal(displayValue(null), 'NULL');
@@ -44,4 +44,10 @@ test('tab-separated text round-trips', () => {
   const tsv = toTSV(['a', 'b'], [{ a: 1, b: 'x\ty' }, { a: null, b: '' }], true);
   assert.equal(tsv, 'a\tb\n1\tx y\n\t');
   assert.deepEqual(parseTSV('1\t2\r\n3\t4\n'), [['1', '2'], ['3', '4']]);
+});
+
+test('a rebuilt column array is the same result', () => {
+  assert.equal(columnsKey(['id', 'name']), columnsKey(['id', 'name'].map(name => name)));
+  assert.notEqual(columnsKey(['id', 'name']), columnsKey(['name', 'id']));
+  assert.notEqual(columnsKey(['a,b']), columnsKey(['a', 'b']));
 });
