@@ -137,6 +137,7 @@ impl Service {
         declare(backend, "workspace.load", Self::load);
         declare(backend, "profile.save", Self::save_profile);
         declare(backend, "profile.delete", Self::delete_profile);
+        declare(backend, "profile.duplicate", Self::duplicate_profile);
         declare(backend, "organization.save", Self::save_organization);
         declare(backend, "connection.test", Self::test_connection);
         declare(backend, "database.call", Self::call);
@@ -281,25 +282,23 @@ impl Service {
 
     /// Runs `method` on the saved profile `profileID` with `params`.
     fn call(&self, params: Value, context: &Context) -> Result<Value, FunctionError> {
-        let id = profile_id(&params["profileID"])?;
         let method = params["method"].as_str().unwrap_or_default();
         if !ENGINE_METHODS.contains(&method) {
             return Err(invalid(format!("{method:?} is not a database method.")).into());
         }
-        let value = self.run_on_profile(id, method, params["params"].clone(), context)?;
+        let value = self.run_on_profile(&params, method, params["params"].clone(), context)?;
         Ok(fit_result(value)?)
     }
 
     /// Runs an export method on `profileID` and writes the file it produced
     /// to `path`; answers `{ bytes }`.
     fn export_file(&self, params: Value, context: &Context) -> Result<Value, FunctionError> {
-        let id = profile_id(&params["profileID"])?;
         let method = params["method"].as_str().unwrap_or_default();
         if !EXPORT_METHODS.contains(&method) {
             return Err(invalid(format!("{method:?} is not an export method.")).into());
         }
         let path = chosen_path(&params["path"])?;
-        let exported = self.run_on_profile(id, method, params["params"].clone(), context)?;
+        let exported = self.run_on_profile(&params, method, params["params"].clone(), context)?;
         let bytes = exported["data"]
             .as_str()
             .and_then(|data| BASE64.decode(data).ok())
@@ -312,7 +311,6 @@ impl Service {
     /// Reads the file at `path` and runs an import method on `profileID`
     /// with it.
     fn import_file(&self, params: Value, context: &Context) -> Result<Value, FunctionError> {
-        let id = profile_id(&params["profileID"])?;
         let method = params["method"].as_str().unwrap_or_default();
         if !IMPORT_METHODS.contains(&method) {
             return Err(invalid(format!("{method:?} is not an import method.")).into());
@@ -325,28 +323,72 @@ impl Service {
             _ => return Err(invalid("\"params\" must be an object.").into()),
         };
         method_params.insert("data".into(), Value::String(BASE64.encode(bytes)));
-        let value = self.run_on_profile(id, method, Value::Object(method_params), context)?;
+        let value = self.run_on_profile(&params, method, Value::Object(method_params), context)?;
         Ok(fit_result(value)?)
     }
 
-    /// Runs `method` on the saved profile `id` with its current password.
+    /// Runs `method` on the saved profile `call.profileID` with its current
+    /// password. A `call.database` string connects to that database instead
+    /// of the profile's, as the sidebar does for each database it lists.
     fn run_on_profile(
         &self,
-        id: &str,
+        call: &Value,
         method: &str,
         params: Value,
         context: &Context,
     ) -> Result<Value, FunctionError> {
-        let profile = self.store.profile(id)?.ok_or_else(|| {
+        let id = profile_id(&call["profileID"])?;
+        let database = match &call["database"] {
+            Value::Null => None,
+            Value::String(database) => Some(database.clone()),
+            _ => return Err(invalid("\"database\" must be a string.").into()),
+        };
+        let mut profile = self.store.profile(id)?.ok_or_else(|| {
             PluginError::new(
                 "database.unknownProfile",
                 "The connection no longer exists.",
             )
         })?;
+        if let Some(database) = database {
+            profile["database"] = Value::String(database);
+        }
         let password = self
             .current_password(id, &context.credentials())?
             .unwrap_or_default();
         self.run(context, method, connection(&profile, password), params)
+    }
+
+    /// Saves a copy of profile `id` named `name` under a new ID, with its
+    /// password kept the same way.
+    fn duplicate_profile(&self, params: Value, context: &Context) -> Result<Value, FunctionError> {
+        let id = profile_id(&params["id"])?;
+        let name = params["name"]
+            .as_str()
+            .filter(|name| !name.trim().is_empty())
+            .ok_or_else(|| invalid("The copy needs a name."))?;
+        let mut profile = self.store.profile(id)?.ok_or_else(|| {
+            PluginError::new(
+                "database.unknownProfile",
+                "The connection no longer exists.",
+            )
+        })?;
+        let copy = uuid::Uuid::new_v4().to_string().to_uppercase();
+        profile["id"] = json!(copy);
+        profile["name"] = json!(name);
+        let credentials = context.credentials();
+        match (
+            PasswordPersistence::of(&profile),
+            self.current_password(id, &credentials)?,
+        ) {
+            (PasswordPersistence::Forever, Some(password)) => credentials
+                .set(&password_key(&copy), &password)
+                .map_err(credential_failure)?,
+            (PasswordPersistence::UntilRestart, Some(password)) => {
+                self.store.set_session_password(&copy, password)
+            }
+            (_, None) => {}
+        }
+        Ok(self.store.save_profile(profile)?)
     }
 
     fn list_history(&self, _: Value, _: &Context) -> Result<Value, FunctionError> {
