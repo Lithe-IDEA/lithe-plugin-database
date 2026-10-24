@@ -1,6 +1,4 @@
-# Checks every pull request and push to main. Nothing here can read the
-# publisher key: it lives only in the protected `release` environment, which
-# only release.yml uses, so packages built here are unsigned.
+# Checks every pull request and push to main.
 name: CI
 
 on:
@@ -18,7 +16,7 @@ concurrency:
 
 jobs:
   ui:
-    name: Page and signing scripts
+    name: Page
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -37,8 +35,6 @@ jobs:
           npm run check
           npm test
           npm run build
-      - name: Test the publisher signature format
-        run: node --test scripts/package-signature.test.mjs
 
   backend:
     name: Backend
@@ -96,13 +92,13 @@ jobs:
         run: |
           id=$(node -p "require('./plugin.json').id")
           mkdir -p dist/verify
-          ditto -x -k dist/*-macos.zip dist/verify
+          ditto -x -k dist/*-darwin.zip dist/verify
           diff -r "dist/$id" "dist/verify/$id"
           test "$(lipo -archs "dist/verify/$id/bin/lithe-database-backend")" = "x86_64 arm64"
       - uses: actions/upload-artifact@v7
         with:
-          name: unsigned-package
+          name: package
           path: |
-            dist/*-macos.zip
-            dist/*-macos.zip.sha256
+            dist/*-darwin.zip
+            dist/*-darwin.zip.sha256
           retention-days: 7

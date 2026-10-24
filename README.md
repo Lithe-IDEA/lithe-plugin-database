@@ -1,14 +1,19 @@
 # Lithe Database plugin
 
-The official database tool window for [Lithe](https://github.com/1lck/Lithe-IDEA):
+The database tool window for [Lithe](https://github.com/1lck/Lithe-IDEA), a
+community plugin (`io.github.lithe-idea.database`) listed in
+[Lithe Store](https://github.com/Lithe-IDEA/Lithe-store):
 connections to MySQL, MariaDB, PostgreSQL, SQLite, SQL Server, MongoDB, Redis,
 and Nacos, with a SQL console, table data editing, structure editing,
 CSV/JSON/SQL import and export, SQL history, and DBX connection import.
 
-Lithe ships without a database module. Install this plugin from **Settings →
-Plugins → Marketplace**; Lithe moves the connections, folders, SQL history,
-and saved passwords of its former built-in module into the plugin on first
-start.
+Lithe ships without a database module. Install this plugin from Lithe Store
+in **Settings → Plugins → Marketplace**; Lithe moves the connections,
+folders, SQL history, and saved passwords of its former built-in module into
+the plugin on first start. The package carries no Lithe signature, so Lithe
+moves that data only into a copy installed from Lithe Store whose listing
+names this repository; a copy installed from disk or another source gets
+none of it.
 
 ## How it is built
 
@@ -69,16 +74,14 @@ the `aarch64-apple-darwin` and `x86_64-apple-darwin` targets.
 npm ci --prefix ui
 npm --prefix ui run check            # TypeScript
 npm --prefix ui test                 # SQL helpers, values, translations
-node --test scripts/package-signature.test.mjs
 cargo test --locked --manifest-path backend/Cargo.toml
 cargo clippy --locked --manifest-path backend/Cargo.toml --all-targets -- -D warnings
 ```
 
-`node scripts/package.mjs` builds `dist/dev.lithe.plugin.database/` and
-`dist/dev.lithe.plugin.database-<version>-macos.zip` with a universal
-backend; `--host-only` builds only this Mac's architecture. The package is
-unsigned, so only a development build of Lithe installs it, from **Install
-from Disk**.
+`node scripts/package.mjs` builds `dist/io.github.lithe-idea.database/` and
+`dist/database-<version>-darwin.zip` with a universal backend;
+`--host-only` builds only this Mac's architecture. Install the folder or
+the zip in Lithe with **Install from Disk** to try it.
 
 `node scripts/e2e.mjs` runs `e2e/database_plugin.rs` against Lithe's Rust
 Core at the commit `e2e/lithe-core.json` pins: Core launches the packaged
@@ -92,21 +95,17 @@ otherwise.
 
 ## Releasing
 
-1. Bump `version` in `plugin.json` and merge it to `main`.
-2. Tag the merge commit `v<version>` and push the tag.
-3. A maintainer approves the `release` environment deployment. The workflow
-   tests, builds the universal package, signs it with the publisher key,
-   runs the end-to-end check, verifies the archive, and publishes a GitHub
-   release with the zip and its SHA-256.
-4. List the release in Lithe's marketplace index with a pull request to
-   Lithe.
-
-One-time repository setup: an environment named `release` that allows only
-`v*` tags and requires a reviewer, holding the secret
-`LITHE_PLUGIN_PACKAGE_PRIVATE_KEY` (the base64 of the raw 32-byte Ed25519
-seed of key `lithe-official-plugins-v2`); and a tag ruleset that lets only
-maintainers create `v*` tags. No other workflow and no pull request can read
-the key, and `scripts/package.mjs` takes it only on stdin.
+1. Bump `version` in `plugin.json` and merge it to `main`. Every release
+   needs a new version; published archives are never replaced.
+2. A maintainer tags the merge commit `v<version>` and pushes the tag (a
+   ruleset lets only organization admins create `v*` tags).
+3. The release workflow tests, builds the universal package, runs the
+   end-to-end check, verifies the archive, and publishes a GitHub release
+   with `database-<version>-darwin.zip` and its SHA-256.
+4. The first release is listed in Lithe Store with a pull request to
+   `lithe-plugin-index.json`. After that, Lithe Store's release tracker
+   opens the pull request for each new version; a maintainer reviews it
+   like code, since the plugin receives database passwords.
 
 ## License
 

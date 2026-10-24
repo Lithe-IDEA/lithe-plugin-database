@@ -1,16 +1,16 @@
 // Builds the installable plugin package and its marketplace archive:
 //
-//   dist/<id>/                      the package Lithe installs
-//   dist/<id>-<version>-macos.zip   the same folder, as `ditto --keepParent` zips it
-//   dist/<id>-<version>-macos.zip.sha256
+//   dist/<id>/                            the package Lithe installs
+//   dist/database-<version>-darwin.zip    the same folder, as `ditto --keepParent` zips it
+//   dist/database-<version>-darwin.zip.sha256
 //
-//   node scripts/package.mjs [--sign] [--host-only]
+//   node scripts/package.mjs [--host-only]
 //
 // The backend is one universal macOS executable (arm64 and x86_64), so one
-// archive serves every Mac. `--host-only` builds just this Mac's architecture
-// for quick local installs. `--sign` reads the publisher key from stdin, as
-// package-signature.mjs does, signs the staged package, and verifies it
-// against the keys Lithe trusts; only the protected release job passes it.
+// archive serves every Mac; Lithe Store reads the `-darwin.zip` suffix as
+// both architectures. `--host-only` builds just this Mac's architecture for
+// quick local installs. The package is a community package without a Lithe
+// signature: Lithe Store pins the archive's SHA-256.
 //
 // Run `npm ci` in ui/ first; this script never installs anything.
 import { execFileSync } from 'node:child_process';
@@ -18,7 +18,6 @@ import { chmod, copyFile, cp, mkdir, readFile, rm, stat, writeFile } from 'node:
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { keyIDFor, OFFICIAL_KEYS, privateKeyFromSeed, signPackage, verifyPackage } from './package-signature.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const BINARY = 'lithe-database-backend';
@@ -26,12 +25,6 @@ const TARGETS = { arm64: 'aarch64-apple-darwin', x86_64: 'x86_64-apple-darwin' }
 
 function run(command, args, options = {}) {
   return execFileSync(command, args, { cwd: root, stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8', ...options });
-}
-
-async function readStdin() {
-  const chunks = [];
-  for await (const chunk of process.stdin) chunks.push(chunk);
-  return Buffer.concat(chunks).toString('utf8');
 }
 
 async function buildBackend(architectures) {
@@ -49,7 +42,7 @@ async function buildBackend(architectures) {
   }
   // Apple silicon refuses to run unsigned code, and a cross-linked slice
   // carries no signature, so the universal file is signed ad hoc. Its
-  // integrity in the package comes from the publisher signature.
+  // integrity in the package comes from the archive SHA-256 Lithe Store pins.
   run('codesign', ['--force', '--sign', '-', '--timestamp=none', universal]);
   run('codesign', ['--verify', '--strict', universal]);
   return universal;
@@ -57,12 +50,8 @@ async function buildBackend(architectures) {
 
 const flags = new Set(process.argv.slice(2));
 for (const flag of flags) {
-  if (!['--sign', '--host-only'].includes(flag)) throw new Error(`Unknown option ${flag}`);
+  if (flag !== '--host-only') throw new Error(`Unknown option ${flag}`);
 }
-// Read and match the key before building, so a missing or wrong secret
-// fails in seconds.
-const privateKey = flags.has('--sign') ? privateKeyFromSeed(await readStdin()) : null;
-if (privateKey) keyIDFor(privateKey, OFFICIAL_KEYS);
 
 const manifest = JSON.parse(await readFile(join(root, 'plugin.json'), 'utf8'));
 const { id, version } = manifest;
@@ -87,13 +76,8 @@ await chmod(join(staged, backendPath), 0o755);
 await cp(join(root, 'ui/dist'), join(staged, 'ui'), { recursive: true });
 for (const entry of webEntries) await stat(join(staged, entry));
 
-if (privateKey) {
-  await signPackage(staged, privateKey, OFFICIAL_KEYS);
-  await verifyPackage(staged, OFFICIAL_KEYS);
-}
-
-const archive = join(dist, `${id}-${version}-macos.zip`);
+const archive = join(dist, `database-${version}-darwin.zip`);
 run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', staged, archive]);
 const sha256 = createHash('sha256').update(await readFile(archive)).digest('hex');
 await writeFile(`${archive}.sha256`, `${sha256}\n`);
-console.log(`${archive}\n${sha256}${privateKey ? '' : '\n(unsigned: only installable from disk in a development build)'}`);
+console.log(`${archive}\n${sha256}`);
