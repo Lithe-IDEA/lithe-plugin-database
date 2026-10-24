@@ -5,13 +5,22 @@
 //! Engine failures reach the page as `PluginError`s whose code is the
 //! engine's code (`confirmation_required`, `read_only`, ...), so the page
 //! can react to them; their messages never contain the password.
+//!
+//! A function result is limited to 1 MiB of JSON, so rows past that are
+//! dropped from a result and the result says so, and CSV and JSON files are
+//! read and written here, at a path the user chose in Lithe's file dialog,
+//! instead of crossing to the page.
 
 use crate::store::{password_key, PasswordPersistence, Store};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use lithe_plugin_sdk::{
     sdk_codes, Backend, Cancelled, Context, Credentials, FunctionError, PluginError, SdkError,
     Value,
 };
 use serde_json::json;
+use std::fs;
+use std::io::{self, Read, Write};
+use std::path::Path;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
@@ -26,12 +35,8 @@ const ENGINE_METHODS: &[&str] = &[
     "diagnostics",
     "execute",
     "explain",
-    "exportCsv",
-    "exportJson",
     "exportSql",
     "exportSqlToFile",
-    "importCsv",
-    "importJson",
     "importSql",
     "importSqlFile",
     "listDatabases",
@@ -61,6 +66,18 @@ const ENGINE_METHODS: &[&str] = &[
     "testConnection",
     "transaction",
 ];
+
+/// Engine methods `file.export` runs; each answers `{ encoding: "base64", data }`.
+const EXPORT_METHODS: &[&str] = &["exportCsv", "exportJson"];
+
+/// Engine methods `file.import` runs; each takes the file as base64 `data`.
+const IMPORT_METHODS: &[&str] = &["importCsv", "importJson"];
+
+/// What a result may serialize to: the SDK refuses results over 1 MiB.
+const RESULT_BUDGET: usize = 1 << 20;
+
+/// The largest file `file.import` reads; the engine holds it in memory.
+const MAXIMUM_IMPORT_BYTES: u64 = 256 << 20;
 
 /// Profile fields the engine reads, by their name in a saved profile.
 const CONNECTION_FIELDS: &[&str] = &[
@@ -123,6 +140,8 @@ impl Service {
         declare(backend, "organization.save", Self::save_organization);
         declare(backend, "connection.test", Self::test_connection);
         declare(backend, "database.call", Self::call);
+        declare(backend, "file.export", Self::export_file);
+        declare(backend, "file.import", Self::import_file);
         declare(backend, "history.list", Self::list_history);
         declare(backend, "history.append", Self::append_history);
     }
@@ -267,6 +286,57 @@ impl Service {
         if !ENGINE_METHODS.contains(&method) {
             return Err(invalid(format!("{method:?} is not a database method.")).into());
         }
+        let value = self.run_on_profile(id, method, params["params"].clone(), context)?;
+        Ok(fit_result(value)?)
+    }
+
+    /// Runs an export method on `profileID` and writes the file it produced
+    /// to `path`; answers `{ bytes }`.
+    fn export_file(&self, params: Value, context: &Context) -> Result<Value, FunctionError> {
+        let id = profile_id(&params["profileID"])?;
+        let method = params["method"].as_str().unwrap_or_default();
+        if !EXPORT_METHODS.contains(&method) {
+            return Err(invalid(format!("{method:?} is not an export method.")).into());
+        }
+        let path = chosen_path(&params["path"])?;
+        let exported = self.run_on_profile(id, method, params["params"].clone(), context)?;
+        let bytes = exported["data"]
+            .as_str()
+            .and_then(|data| BASE64.decode(data).ok())
+            .ok_or_else(|| FunctionError::internal(format!("{method} answered no base64 data")))?;
+        context.check_cancelled()?;
+        write_atomically(path, &bytes).map_err(|error| file_failure(path, error))?;
+        Ok(json!({ "bytes": bytes.len() }))
+    }
+
+    /// Reads the file at `path` and runs an import method on `profileID`
+    /// with it.
+    fn import_file(&self, params: Value, context: &Context) -> Result<Value, FunctionError> {
+        let id = profile_id(&params["profileID"])?;
+        let method = params["method"].as_str().unwrap_or_default();
+        if !IMPORT_METHODS.contains(&method) {
+            return Err(invalid(format!("{method:?} is not an import method.")).into());
+        }
+        let path = chosen_path(&params["path"])?;
+        let bytes = read_import(path).map_err(|error| file_failure(path, error))?;
+        let mut method_params = match params["params"].clone() {
+            Value::Object(object) => object,
+            Value::Null => Default::default(),
+            _ => return Err(invalid("\"params\" must be an object.").into()),
+        };
+        method_params.insert("data".into(), Value::String(BASE64.encode(bytes)));
+        let value = self.run_on_profile(id, method, Value::Object(method_params), context)?;
+        Ok(fit_result(value)?)
+    }
+
+    /// Runs `method` on the saved profile `id` with its current password.
+    fn run_on_profile(
+        &self,
+        id: &str,
+        method: &str,
+        params: Value,
+        context: &Context,
+    ) -> Result<Value, FunctionError> {
         let profile = self.store.profile(id)?.ok_or_else(|| {
             PluginError::new(
                 "database.unknownProfile",
@@ -276,12 +346,7 @@ impl Service {
         let password = self
             .current_password(id, &context.credentials())?
             .unwrap_or_default();
-        self.run(
-            context,
-            method,
-            connection(&profile, password),
-            params["params"].clone(),
-        )
+        self.run(context, method, connection(&profile, password), params)
     }
 
     fn list_history(&self, _: Value, _: &Context) -> Result<Value, FunctionError> {
@@ -353,6 +418,101 @@ fn connection(profile: &Value, password: String) -> Value {
     }
     connection.insert("password".into(), Value::String(password));
     Value::Object(connection)
+}
+
+/// Keeps `value` within the result limit. Rows that do not fit are dropped
+/// from the end and the result is marked `truncated` and `sizeLimited`, so
+/// the page can say why; any other result that large is refused.
+fn fit_result(mut value: Value) -> Result<Value, PluginError> {
+    let size = |value: &Value| serde_json::to_vec(value).map_or(usize::MAX, |bytes| bytes.len());
+    if size(&value) <= RESULT_BUDGET {
+        return Ok(value);
+    }
+    let too_large = || {
+        PluginError::new(
+            "database.resultTooLarge",
+            "The result is larger than 1 MiB. Narrow the query, or export it to a file.",
+        )
+    };
+    let Some(rows) = value
+        .get_mut("rows")
+        .and_then(Value::as_array_mut)
+        .map(std::mem::take)
+    else {
+        return Err(too_large());
+    };
+    value["truncated"] = Value::Bool(true);
+    value["sizeLimited"] = Value::Bool(true);
+    // Each kept row adds its own bytes and a separating comma.
+    let mut remaining = RESULT_BUDGET
+        .checked_sub(size(&value))
+        .ok_or_else(too_large)?;
+    let mut kept = Vec::new();
+    for row in rows {
+        let cost = size(&row) + 1;
+        if cost > remaining {
+            break;
+        }
+        remaining -= cost;
+        kept.push(row);
+    }
+    value["rows"] = Value::Array(kept);
+    Ok(value)
+}
+
+/// A path from Lithe's file dialog: absolute, so it never resolves against
+/// the backend's working directory, the plugin's state.
+fn chosen_path(value: &Value) -> Result<&Path, PluginError> {
+    value
+        .as_str()
+        .map(Path::new)
+        .filter(|path| path.is_absolute())
+        .ok_or_else(|| invalid("\"path\" must be an absolute file path."))
+}
+
+/// Writes beside `path` and renames, so a failed export never leaves half a
+/// file in place of what the user had there.
+fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no file name"))?;
+    let mut temporary_name = std::ffi::OsString::from(".");
+    temporary_name.push(name);
+    temporary_name.push(".lithe-export");
+    let temporary = path.with_file_name(temporary_name);
+    let written = (|| {
+        let mut file = fs::File::create(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()
+    })()
+    .and_then(|()| fs::rename(&temporary, path));
+    if written.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    written
+}
+
+fn read_import(path: &Path) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take(MAXIMUM_IMPORT_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAXIMUM_IMPORT_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "the file is larger than 256 MiB",
+        ));
+    }
+    Ok(bytes)
+}
+
+/// A file the user chose that cannot be read or written; the user knows the
+/// path, so the message names it.
+fn file_failure(path: &Path, error: io::Error) -> PluginError {
+    PluginError::new(
+        "database.fileFailed",
+        format!("{}: {error}", path.display()),
+    )
 }
 
 /// An engine failure the page can tell apart by the engine's code.
@@ -434,6 +594,53 @@ mod tests {
     }
 
     #[test]
+    fn rows_past_the_result_limit_are_dropped_and_marked() {
+        let row = json!({ "id": 1, "text": "x".repeat(1000) });
+        let rows: Vec<_> = (0..2000).map(|_| row.clone()).collect();
+        let fitted =
+            fit_result(json!({ "columns": ["id", "text"], "truncated": false, "rows": rows }))
+                .unwrap();
+        assert!(serde_json::to_vec(&fitted).unwrap().len() <= RESULT_BUDGET);
+        assert_eq!(fitted["truncated"], true);
+        assert_eq!(fitted["sizeLimited"], true);
+        let kept = fitted["rows"].as_array().unwrap().len();
+        assert!((1000..2000).contains(&kept), "{kept}");
+
+        let small = json!({ "rows": [row], "truncated": false });
+        assert_eq!(fit_result(small.clone()).unwrap(), small);
+        let huge = json!({ "stringValue": "x".repeat(RESULT_BUDGET) });
+        assert_eq!(
+            fit_result(huge).unwrap_err().code(),
+            "database.resultTooLarge"
+        );
+    }
+
+    #[test]
+    fn exports_replace_the_chosen_file_whole() {
+        let directory =
+            std::env::temp_dir().join(format!("lithe-database-export-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("rows.csv");
+        fs::write(&path, "old").unwrap();
+        write_atomically(&path, b"id\n1\n").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"id\n1\n");
+        assert_eq!(read_import(&path).unwrap(), b"id\n1\n");
+        // A failed write leaves no temporary file and the old content.
+        let missing = directory.join("missing").join("rows.csv");
+        assert!(write_atomically(&missing, b"x").is_err());
+        let names: Vec<_> = fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["rows.csv"]);
+        fs::remove_dir_all(&directory).unwrap();
+
+        assert!(chosen_path(&json!("relative.csv")).is_err());
+        assert!(chosen_path(&json!(null)).is_err());
+        assert!(chosen_path(&json!("/tmp/rows.csv")).is_ok());
+    }
+
+    #[test]
     fn every_engine_method_is_known_to_the_engine() {
         // An allowed method the engine does not implement would fail only
         // when a page first calls it.
@@ -446,7 +653,11 @@ mod tests {
             std::env::temp_dir().join(format!("lithe-database-methods-{}", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
         let path = directory.join("probe.sqlite");
-        for method in ENGINE_METHODS {
+        for method in ENGINE_METHODS
+            .iter()
+            .chain(EXPORT_METHODS)
+            .chain(IMPORT_METHODS)
+        {
             // Redis and Nacos methods exist only for their kinds. Port 1
             // refuses connections, so no local server is ever touched.
             let connection = match method {

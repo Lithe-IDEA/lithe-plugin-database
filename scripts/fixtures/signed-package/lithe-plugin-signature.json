@@ -1,0 +1,14 @@
+{
+  "algorithm": "ed25519",
+  "files": {
+    ".hidden": "e084a3683ef795d1cdbf5e9b253f2ca1f783ae0d0d6e47e419acbbc4fc80bbfa",
+    "bin/tool": "9fc15ccbc0e0976f79d26aa6d6a93bf4104a874cbc193cceb9bb6b450ac22bdd",
+    "plugin.json": "f88a73b907e1cdfce7492621be28cd8a81dc56d9b72bee16e7aa6f4b7f8a7be7",
+    "ui/nested/ünï.txt": "b95becd154aa095f76c4ca47a5aeb8350d6dfcb838404edfc9dae06628de938d"
+  },
+  "keyID": "lithe-test-key",
+  "pluginID": "dev.lithe.fixture.signature",
+  "pluginVersion": "1.2.3",
+  "schemaVersion": 1,
+  "signature": "z9d+w4/m+Zb/3vCduGM+rBW8VoOuW9Md0LvmsKUaPH2f62iyIAsk55E/3j6CKc84sZ67gElYC1brWnsDQBVyBQ=="
+}
