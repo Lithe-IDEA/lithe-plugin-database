@@ -8,6 +8,7 @@ import { t } from '../i18n.ts';
 import type { Profile } from '../model.ts';
 import { quoteIdentifier } from '../sql.ts';
 import { confirm, notify } from '../store.ts';
+import { formatBytes } from '../values.ts';
 
 type Scope = { profileID: string; database?: string };
 
@@ -131,10 +132,4 @@ export async function dropTable(profile: Profile, database: string | undefined, 
     notify(t('Deleted {table}.', { table }));
     void loadDatabase(profile.id, treeDatabase, true);
   }
-}
-
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }

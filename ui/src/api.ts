@@ -65,15 +65,21 @@ export const api = {
     ),
   history: () => invoke<HistoryEntry[]>('history.list').result,
   appendHistory: (entry: HistoryEntry) => invoke<null>('history.append', { entry }).result,
-  importDBX: (path: string, password?: string) =>
+  /** Reads a DBX export at `path`; an encrypted one needs its `password`. */
+  previewDBX: (path: string, password?: string) =>
     invoke<DBXPreview>('connections.previewDBX', password === undefined ? { path } : { path, password }).result,
-  applyDBX: (path: string, password: string | undefined, selected: string[]) =>
-    invoke<{ imported: number }>('connections.importDBX', { path, password, selected }).result,
+  /** Saves the connections of a DBX export whose preview IDs are `selected`. */
+  importDBX: (path: string, password: string | undefined, selected: string[]) =>
+    invoke<{ imported: number }>('connections.importDBX', password === undefined ? { path, selected } : { path, password, selected }).result,
 };
 
 export interface DBXPreview {
+  encrypted: boolean;
+  /** `host` is the file path of a SQLite connection; `warnings` are keys such as `sshPassword`. */
   connections: { id: string; name: string; kind: string; host: string; port: number; duplicate: boolean; warnings: string[] }[];
+  /** Connections of a database type Lithe does not support. */
   unsupported: number;
+  /** Folders in the export's layout. */
   folders: number;
 }
 
