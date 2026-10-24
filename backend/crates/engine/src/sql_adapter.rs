@@ -91,6 +91,7 @@ pub(crate) async fn sql_database_method(method: &str, params: Params) -> DbResul
             run_transaction(direct.as_ref().unwrap(), kind, &params.statements).await
         }
         "exportCsv" => {
+            ensure_query_allowed(&connection, &params.sql, params.confirmed)?;
             export_csv(
                 direct.as_ref().unwrap(),
                 &params.sql,
@@ -100,6 +101,7 @@ pub(crate) async fn sql_database_method(method: &str, params: Params) -> DbResul
             .await
         }
         "exportJson" => {
+            ensure_query_allowed(&connection, &params.sql, params.confirmed)?;
             export_json(
                 direct.as_ref().unwrap(),
                 &params.sql,

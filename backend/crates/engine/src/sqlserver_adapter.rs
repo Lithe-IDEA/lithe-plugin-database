@@ -75,8 +75,14 @@ pub(super) async fn method(method: &str, params: Params) -> DbResult {
             ensure_transaction_allowed(&connection, &params.statements, params.confirmed)?;
             run_transaction(&mut client, &params).await
         }
-        "exportCsv" => export_csv(&mut client, &params.sql, params.limit).await,
-        "exportJson" => export_json(&mut client, &params.sql, params.limit).await,
+        "exportCsv" => {
+            ensure_query_allowed(&connection, &params.sql, params.confirmed)?;
+            export_csv(&mut client, &params.sql, params.limit).await
+        }
+        "exportJson" => {
+            ensure_query_allowed(&connection, &params.sql, params.confirmed)?;
+            export_json(&mut client, &params.sql, params.limit).await
+        }
         "importCsv" | "importJson" => {
             ensure_write_allowed(&connection, "INSERT", params.confirmed)?;
             import_data(&mut client, &params, method == "importCsv").await
