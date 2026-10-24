@@ -307,7 +307,7 @@ fn ensure_specialized_write(
     }
     if connection.production_protection && !confirmed {
         return Err((
-            "write_confirmation_required".into(),
+            "confirmation_required".into(),
             format!("{action} requires confirmation because production protection is enabled"),
         ));
     }
@@ -826,6 +826,35 @@ mod tests {
             "UPDATE users SET active = 0\nWHERE id = 1"
         )));
         assert!(!requires(request(false, "DROP TABLE users")));
+    }
+
+    #[test]
+    fn redis_and_nacos_writes_answer_with_the_sql_guard_codes() {
+        // The page retries any `confirmation_required` after the user
+        // confirms, so every write path must use the same codes.
+        let connection = |read_only: bool, production_protection: bool| -> Connection {
+            serde_json::from_value(json!({
+                "kind": "redis",
+                "readOnly": read_only,
+                "productionProtection": production_protection,
+            }))
+            .unwrap()
+        };
+        let code = |connection: &Connection, confirmed: bool| {
+            ensure_specialized_write(connection, "Saving", confirmed, false)
+                .err()
+                .map(|(code, _)| code)
+        };
+        assert_eq!(
+            code(&connection(true, false), true).as_deref(),
+            Some("read_only")
+        );
+        assert_eq!(
+            code(&connection(false, true), false).as_deref(),
+            Some("confirmation_required")
+        );
+        assert_eq!(code(&connection(false, true), true), None);
+        assert_eq!(code(&connection(false, false), false), None);
     }
 
     #[test]

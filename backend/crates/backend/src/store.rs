@@ -41,6 +41,17 @@ pub fn password_key(profile_id: &str) -> String {
     format!("connection:{profile_id}:password")
 }
 
+/// Whether two profiles reach the same connection under the same name: equal
+/// name, host, port, and path. Imports skip a profile that matches a saved one.
+pub fn is_same_connection(a: &Value, b: &Value) -> bool {
+    let text = |profile: &Value, key: &str| profile[key].as_str().unwrap_or_default().to_owned();
+    let port = |profile: &Value| profile["port"].as_u64().unwrap_or_default();
+    ["name", "host", "path"]
+        .iter()
+        .all(|key| text(a, key) == text(b, key))
+        && port(a) == port(b)
+}
+
 pub struct Store {
     directory: PathBuf,
     /// Serializes read-modify-write cycles of the files.
@@ -109,6 +120,79 @@ impl Store {
             CONNECTIONS_FILE,
             &json!({ "schemaVersion": SCHEMA_VERSION, "profiles": profiles, "folders": folders }),
         )
+    }
+
+    /// Adds imported `profiles` and the `folders` they sit in, in one write.
+    ///
+    /// `folders` lists parents before children; a `parentID` names a saved
+    /// folder or an earlier imported one. An imported folder whose name
+    /// matches a saved folder's under the same parent, ignoring case, is
+    /// merged into it, and the profiles in it move along. A profile that is
+    /// the same connection as a saved one, by [`is_same_connection`], is
+    /// skipped. Answers the IDs of the profiles added; nothing is written
+    /// when there are none.
+    pub fn import_profiles(
+        &self,
+        profiles: Vec<Value>,
+        folders: Vec<Value>,
+    ) -> io::Result<Vec<String>> {
+        let _files = self.files.lock().unwrap_or_else(|error| error.into_inner());
+        let mut connections = self.read_connections()?;
+        let mut saved_folders = connections["folders"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        // Imported folder ID -> the ID it ends up with.
+        let mut merged: HashMap<String, Value> = HashMap::new();
+        for folder in folders {
+            let (Some(id), Some(name)) = (folder["id"].as_str(), folder["name"].as_str()) else {
+                continue;
+            };
+            let parent = match folder["parentID"].as_str() {
+                Some(parent) => merged.get(parent).cloned().unwrap_or_else(|| json!(parent)),
+                None => Value::Null,
+            };
+            let lowered = name.to_lowercase();
+            let existing = saved_folders.iter().find(|saved| {
+                saved["parentID"] == parent
+                    && saved["name"]
+                        .as_str()
+                        .is_some_and(|saved| saved.to_lowercase() == lowered)
+            });
+            match existing {
+                Some(existing) => {
+                    merged.insert(id.to_string(), existing["id"].clone());
+                }
+                None => {
+                    merged.insert(id.to_string(), json!(id));
+                    saved_folders.push(json!({ "id": id, "name": name, "parentID": parent }));
+                }
+            }
+        }
+
+        let saved_profiles = connections["profiles"]
+            .as_array_mut()
+            .expect("profiles array");
+        let mut added = Vec::new();
+        for mut profile in profiles {
+            if saved_profiles
+                .iter()
+                .any(|saved| is_same_connection(saved, &profile))
+            {
+                continue;
+            }
+            if let Some(folder) = profile["folderID"].as_str() {
+                profile["folderID"] = merged.get(folder).cloned().unwrap_or(Value::Null);
+            }
+            added.push(profile["id"].as_str().unwrap_or_default().to_string());
+            saved_profiles.push(profile);
+        }
+        if added.is_empty() {
+            return Ok(added);
+        }
+        connections["folders"] = Value::Array(saved_folders);
+        self.write_json(CONNECTIONS_FILE, &connections)?;
+        Ok(added)
     }
 
     pub fn profile(&self, profile_id: &str) -> io::Result<Option<Value>> {
@@ -280,6 +364,60 @@ mod tests {
             let text = fs::read_to_string(entry.unwrap().path()).unwrap();
             assert!(!text.contains("secret"), "{text}");
         }
+    }
+
+    #[test]
+    fn imports_merge_folders_by_name_and_skip_saved_connections() {
+        let directory = TemporaryDirectory::new("import");
+        let store = Store::new(directory.0.clone());
+        let existing = json!({ "id": "a", "name": "Prod", "host": "db", "port": 3306, "path": "" });
+        store
+            .save_organization(
+                vec![existing],
+                vec![json!({ "id": "F1", "name": "Production", "parentID": null })],
+            )
+            .unwrap();
+        let added = store
+            .import_profiles(
+                vec![
+                    // The same connection as the saved "a".
+                    json!({ "id": "b", "name": "Prod", "host": "db", "port": 3306, "path": "", "folderID": "I1" }),
+                    json!({ "id": "c", "name": "Local", "host": "", "port": 0, "path": "/tmp/x.sqlite", "folderID": "I2" }),
+                    json!({ "id": "d", "name": "Loose", "host": "h", "port": 1, "path": "", "folderID": null }),
+                ],
+                vec![
+                    json!({ "id": "I1", "name": "PRODUCTION", "parentID": null }),
+                    json!({ "id": "I2", "name": "Local", "parentID": "I1" }),
+                ],
+            )
+            .unwrap();
+        assert_eq!(added, ["c", "d"]);
+        let connections = store.connections().unwrap();
+        assert_eq!(
+            connections["folders"],
+            json!([
+                { "id": "F1", "name": "Production", "parentID": null },
+                { "id": "I2", "name": "Local", "parentID": "F1" },
+            ])
+        );
+        let profiles = connections["profiles"].as_array().unwrap();
+        assert_eq!(profiles.len(), 3);
+        assert_eq!(profiles[1]["folderID"], "I2");
+        assert_eq!(profiles[2]["folderID"], Value::Null);
+
+        // Importing them again adds nothing and writes nothing.
+        let before = fs::read(directory.0.join(CONNECTIONS_FILE)).unwrap();
+        let again = store
+            .import_profiles(
+                vec![json!({ "id": "e", "name": "Loose", "host": "h", "port": 1, "path": "" })],
+                vec![json!({ "id": "I3", "name": "Unused", "parentID": null })],
+            )
+            .unwrap();
+        assert!(again.is_empty());
+        assert_eq!(
+            fs::read(directory.0.join(CONNECTIONS_FILE)).unwrap(),
+            before
+        );
     }
 
     #[test]

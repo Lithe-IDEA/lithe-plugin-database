@@ -4,6 +4,7 @@
 //! their passwords in the host's credential store, and runs every database
 //! method through the engine.
 
+mod dbx;
 mod service;
 mod store;
 

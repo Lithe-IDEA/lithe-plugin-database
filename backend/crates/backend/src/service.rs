@@ -145,6 +145,8 @@ impl Service {
         declare(backend, "file.import", Self::import_file);
         declare(backend, "history.list", Self::list_history);
         declare(backend, "history.append", Self::append_history);
+        declare(backend, "connections.previewDBX", Self::preview_dbx);
+        declare(backend, "connections.importDBX", Self::import_dbx);
     }
 
     /// `{ capabilities, profiles, folders }`; profiles never carry passwords.
@@ -404,6 +406,16 @@ impl Service {
         Ok(Value::Null)
     }
 
+    /// Reads a DBX connection export; see [`crate::dbx::preview`].
+    fn preview_dbx(&self, params: Value, _: &Context) -> Result<Value, FunctionError> {
+        crate::dbx::preview(&self.store, &params)
+    }
+
+    /// Saves connections chosen from a DBX export; see [`crate::dbx::import`].
+    fn import_dbx(&self, params: Value, context: &Context) -> Result<Value, FunctionError> {
+        crate::dbx::import(&self.store, &params, &context.credentials())
+    }
+
     /// The password of a saved profile: the session copy, else the stored one.
     fn current_password(
         &self,
@@ -504,7 +516,7 @@ fn fit_result(mut value: Value) -> Result<Value, PluginError> {
 
 /// A path from Lithe's file dialog: absolute, so it never resolves against
 /// the backend's working directory, the plugin's state.
-fn chosen_path(value: &Value) -> Result<&Path, PluginError> {
+pub(crate) fn chosen_path(value: &Value) -> Result<&Path, PluginError> {
     value
         .as_str()
         .map(Path::new)
@@ -550,7 +562,7 @@ fn read_import(path: &Path) -> io::Result<Vec<u8>> {
 
 /// A file the user chose that cannot be read or written; the user knows the
 /// path, so the message names it.
-fn file_failure(path: &Path, error: io::Error) -> PluginError {
+pub(crate) fn file_failure(path: &Path, error: io::Error) -> PluginError {
     PluginError::new(
         "database.fileFailed",
         format!("{}: {error}", path.display()),
@@ -569,7 +581,7 @@ fn engine_failure(code: &str, message: String) -> PluginError {
 
 /// A credential store the page can explain, such as a missing permission or
 /// a locked Keychain; anything else stays an internal failure.
-fn credential_failure(error: SdkError) -> FunctionError {
+pub(crate) fn credential_failure(error: SdkError) -> FunctionError {
     if error.code() == sdk_codes::CALL_CANCELLED {
         FunctionError::Cancelled
     } else if error.code() == sdk_codes::NOT_NEGOTIATED || error.code().starts_with("plugin.host.")
@@ -587,7 +599,7 @@ fn credential_failure(error: SdkError) -> FunctionError {
     }
 }
 
-fn invalid(message: impl Into<String>) -> PluginError {
+pub(crate) fn invalid(message: impl Into<String>) -> PluginError {
     PluginError::new("database.invalidParams", message)
 }
 
