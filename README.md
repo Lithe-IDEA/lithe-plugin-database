@@ -1,5 +1,7 @@
 # Lithe Database plugin
 
+<img src="assets/database.svg" width="64" height="64" alt="">
+
 The database tool window for [Lithe](https://github.com/1lck/Lithe-IDEA), a
 community plugin (`io.github.lithe-idea.database`) listed in
 [Lithe Store](https://github.com/Lithe-IDEA/Lithe-store):
