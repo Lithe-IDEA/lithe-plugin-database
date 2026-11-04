@@ -17,6 +17,14 @@ moves that data only into a copy installed from Lithe Store whose listing
 names this repository; a copy installed from disk or another source gets
 none of it.
 
+Version 0.1.2 is a pre-release. It needs a Lithe preview build whose host
+offers structured plugin diagnostics (`litheLogging: 1`); stable Lithe 0.6.7
+installs it but cannot start its backend, so keep 0.1.1 from Lithe Store there.
+Lithe Store's release tracker skips pre-releases, so 0.1.2 is installed from
+[Releases](https://github.com/Lithe-IDEA/lithe-plugin-database/releases)
+with **Install Plugin from Disk…**. Such a copy does not receive the former
+built-in module's data; the move waits until a copy from Lithe Store runs.
+
 ## How it is built
 
 The plugin uses [plugin contract v1](https://github.com/Lithe-IDEA/lithe-plugin-docs/blob/main/contract/v1/README.md)
@@ -104,7 +112,9 @@ otherwise.
    ruleset lets only organization admins create `v*` tags).
 3. The release workflow tests, builds the universal package, runs the
    end-to-end check, verifies the archive, and publishes a GitHub release
-   with `database-<version>-darwin.zip` and its SHA-256.
+   with `database-<version>-darwin.zip` and its SHA-256. Tags listed in
+   `PRERELEASE_TAGS` in `release.yml` are published as pre-releases, and
+   `docs/releases/<tag>.md`, when present, becomes the release notes.
 4. The first release is listed in Lithe Store with a pull request to
    `lithe-plugin-index.json`. After that, Lithe Store's release tracker
    opens the pull request for each new version; a maintainer reviews it
@@ -138,5 +148,5 @@ stdout 保持协议帧专用；日志不写插件包或 app bundle，不影响�
 
 新的日志端到端验证要求 Core 已包含 `litheLogging` v1；`scripts/e2e.mjs` 必须显式传入
 `--source` 和 `--ref`，不再默认运行旧的 `e2e/lithe-core.json` 基线。CI 明确选择主仓
-`preview`，需要先合并宿主日志 API；跨仓发布时再把验证引用固定到合并后的精确提交。
+`preview`；Release 工作流把验证引用固定到包含宿主日志 API 的精确 preview 提交（`CORE_REF`）。
 宿主改动未合并时这项检查会真实失败，不跳过，也不把旧协议运行当作新 API 验收。

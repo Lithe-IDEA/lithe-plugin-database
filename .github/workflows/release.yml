@@ -3,6 +3,8 @@
 # community package without a Lithe signature: Lithe Store lists the
 # release's archive by its SHA-256, and its release tracker picks up later
 # versions on its own.
+# Tags listed in PRERELEASE_TAGS are published as pre-releases, which the
+# tracker skips. docs/releases/<tag>.md, when present, is the release notes.
 name: Release
 
 on:
@@ -16,6 +18,13 @@ permissions:
 concurrency:
   group: release
   cancel-in-progress: false
+
+env:
+  # v0.1.2 needs a host offering litheLogging 1, which stable Lithe 0.6.7
+  # lacks. Space-separated tags.
+  PRERELEASE_TAGS: v0.1.2
+  # Exact preview commit containing the litheLogging 1 host API (1lck/Lithe-IDEA#1699).
+  CORE_REF: 4dd3165912a7ef4ccfd7240890a33b63751c9b3e
 
 jobs:
   release:
@@ -43,7 +52,7 @@ jobs:
       - name: Build the package
         run: node scripts/package.mjs
       - name: Run the backend through Rust Core
-        run: node scripts/e2e.mjs --source https://github.com/1lck/Lithe-IDEA.git --ref preview
+        run: node scripts/e2e.mjs --source https://github.com/1lck/Lithe-IDEA.git --ref "$CORE_REF"
       - name: Verify the archive users download
         run: |
           id=$(node -p "require('./plugin.json').id")
@@ -58,8 +67,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           archive=$(ls dist/*-darwin.zip)
+          notes="$RUNNER_TEMP/notes.md"
+          if [[ -s "docs/releases/$GITHUB_REF_NAME.md" ]]; then
+            cp "docs/releases/$GITHUB_REF_NAME.md" "$notes"
+          else
+            echo "Lithe database plugin $GITHUB_REF_NAME for macOS (Apple silicon and Intel)." > "$notes"
+          fi
+          printf '\nSHA-256: %s\n' "$(cat "$archive.sha256")" >> "$notes"
+          release_flags=()
+          for tag in $PRERELEASE_TAGS; do
+            if [[ "$tag" == "$GITHUB_REF_NAME" ]]; then release_flags+=(--prerelease); fi
+          done
           # Published assets are never replaced: Lithe Store pins their SHA-256.
           gh release create "$GITHUB_REF_NAME" "$archive" "$archive.sha256" \
             --verify-tag \
             --title "Database $GITHUB_REF_NAME" \
-            --notes "Lithe database plugin $GITHUB_REF_NAME for macOS (Apple silicon and Intel). SHA-256: $(cat "$archive.sha256")"
+            --notes-file "$notes" \
+            "${release_flags[@]}"
