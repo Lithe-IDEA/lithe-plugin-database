@@ -26,6 +26,8 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: ui/package-lock.json
+      - name: Verify SDK source provenance
+        run: node scripts/verify-sdk-source.mjs
       - name: Install page dependencies
         working-directory: ui
         run: npm ci
@@ -87,7 +89,7 @@ jobs:
           npm ci --prefix ui
           node scripts/package.mjs
       - name: Run the backend through Rust Core
-        run: node scripts/e2e.mjs
+        run: node scripts/e2e.mjs --source https://github.com/1lck/Lithe-IDEA.git --ref preview
       - name: Check the archive holds the package
         run: |
           id=$(node -p "require('./plugin.json').id")

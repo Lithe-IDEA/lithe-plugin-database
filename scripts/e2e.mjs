@@ -1,12 +1,12 @@
 // Runs e2e/database_plugin.rs against Lithe's Rust Core with the package
 // scripts/package.mjs staged in dist/.
 //
-//   node scripts/e2e.mjs [--ref <commit|branch>] [--source <Lithe git URL or path>]
+//   node scripts/e2e.mjs --ref <commit|branch> --source <Lithe git URL or path>
 //
 // Core lives in the Lithe repository, so the scenario is copied into
 // rust/lithe-core/tests/ of a disposable Lithe checkout in .artifacts/lithe
-// (only rust/ and shared/ are checked out) and run there with cargo. By
-// default that checkout is the commit e2e/lithe-core.json pins.
+// (only rust/ and shared/ are checked out) and run there with cargo.
+// Both --source and --ref are required; Core must support litheLogging v1.
 import { spawn } from 'node:child_process';
 import { access, copyFile, mkdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -41,7 +41,9 @@ async function checkoutCore(source, ref) {
 }
 
 const { values } = parseArgs({ options: { ref: { type: 'string' }, source: { type: 'string' } } });
-const pin = JSON.parse(await readFile(join(root, 'e2e/lithe-core.json'), 'utf8'));
+if (!values.source || !values.ref) {
+  throw new Error('Structured plugin logging requires an explicit new Core checkout: pass --source <repository URL or path> --ref <commit or branch> containing litheLogging v1.');
+}
 const manifest = JSON.parse(await readFile(join(root, 'plugin.json'), 'utf8'));
 const pkg = join(root, 'dist', manifest.id);
 try {
@@ -52,7 +54,7 @@ try {
 
 // git runs inside the checkout, so a local source must be absolute.
 const source = values.source && !/^[a-z]+:\/\//.test(values.source) ? resolve(values.source) : values.source;
-await checkoutCore(source ?? `${pin.repository}.git`, values.ref ?? pin.revision);
+await checkoutCore(source, values.ref);
 await copyFile(join(root, 'e2e', `${TEST}.rs`), join(work, 'rust/lithe-core/tests', `${TEST}.rs`));
 await run('cargo', ['test', '--locked', '--manifest-path', join(work, 'rust/Cargo.toml'), '-p', 'lithe-core',
   '--test', TEST, '--', '--nocapture'], {

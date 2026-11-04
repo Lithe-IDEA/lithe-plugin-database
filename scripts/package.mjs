@@ -19,6 +19,8 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+await import('./verify-sdk-source.mjs');
+
 const root = fileURLToPath(new URL('..', import.meta.url));
 const BINARY = 'lithe-database-backend';
 const TARGETS = { arm64: 'aarch64-apple-darwin', x86_64: 'x86_64-apple-darwin' };

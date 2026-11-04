@@ -12,10 +12,12 @@ use lithe_plugin_sdk::Backend;
 use std::path::PathBuf;
 
 fn main() {
+    let mut backend = Backend::new("lithe-database").version(env!("CARGO_PKG_VERSION"));
     let state = match state_directory() {
         Ok(state) => state,
-        Err(message) => {
-            eprintln!("{message}");
+        Err(_) => {
+            // Before listen there is no protocol output. The host records
+            // this startup exit through the process lifecycle.
             std::process::exit(2);
         }
     };
@@ -26,12 +28,10 @@ fn main() {
         .build()
     {
         Ok(runtime) => runtime,
-        Err(error) => {
-            eprintln!("The async runtime could not start: {error}");
+        Err(_) => {
             std::process::exit(1);
         }
     };
-    let mut backend = Backend::new("lithe-database").version(env!("CARGO_PKG_VERSION"));
     service::Service::new(store::Store::new(state), runtime).install(&mut backend);
     std::process::exit(backend.listen());
 }
