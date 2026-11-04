@@ -21,6 +21,7 @@ use serde_json::json;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
@@ -114,11 +115,17 @@ const KINDS: &[&str] = &[
 pub struct Service {
     store: Store,
     runtime: Runtime,
+    /// A bounded warning flag; repeated large queries do not flood diagnostics.
+    result_limit_reported: AtomicBool,
 }
 
 impl Service {
     pub fn new(store: Store, runtime: Runtime) -> Arc<Self> {
-        Arc::new(Self { store, runtime })
+        Arc::new(Self {
+            store,
+            runtime,
+            result_limit_reported: AtomicBool::new(false),
+        })
     }
 
     /// Declares every function on `backend`.
@@ -147,6 +154,16 @@ impl Service {
         declare(backend, "history.append", Self::append_history);
         declare(backend, "connections.previewDBX", Self::preview_dbx);
         declare(backend, "connections.importDBX", Self::import_dbx);
+        for id in [
+            "workspace.load",
+            "history.list",
+            "history.append",
+            "connections.previewDBX",
+        ] {
+            backend
+                .suppress_success_diagnostics(id)
+                .expect("registered function ID");
+        }
     }
 
     /// `{ capabilities, profiles, folders }`; profiles never carry passwords.
@@ -288,8 +305,31 @@ impl Service {
         if !ENGINE_METHODS.contains(&method) {
             return Err(invalid(format!("{method:?} is not a database method.")).into());
         }
+        // One public function serves both explicit queries and UI browsing.
+        // Keep query/write results at INFO; only this invocation's successful
+        // read/probe is quiet, while its failures and degradations still emit.
+        if matches!(
+            method,
+            "checkWriteProtection"
+                | "describeTable"
+                | "diagnostics"
+                | "listDatabases"
+                | "listForeignKeys"
+                | "listIndexes"
+                | "listObjects"
+                | "listTables"
+                | "pageTable"
+                | "nacosGetConfig"
+                | "nacosListConfigs"
+                | "nacosListInstances"
+                | "nacosListServices"
+                | "redisGetKey"
+                | "redisScan"
+        ) {
+            context.suppress_success_diagnostics();
+        }
         let value = self.run_on_profile(&params, method, params["params"].clone(), context)?;
-        Ok(fit_result(value)?)
+        self.fit_result(value, context)
     }
 
     /// Runs an export method on `profileID` and writes the file it produced
@@ -326,7 +366,21 @@ impl Service {
         };
         method_params.insert("data".into(), Value::String(BASE64.encode(bytes)));
         let value = self.run_on_profile(&params, method, Value::Object(method_params), context)?;
-        Ok(fit_result(value)?)
+        self.fit_result(value, context)
+    }
+
+    fn fit_result(&self, value: Value, context: &Context) -> Result<Value, FunctionError> {
+        let value = fit_result(value)?;
+        if value["sizeLimited"] == true && !self.result_limit_reported.swap(true, Ordering::Relaxed)
+        {
+            // This is a degraded successful result. Failed calls remain owned
+            // by the SDK, so the same error is not recorded twice.
+            context
+                .diagnostics()
+                .degraded(context.function_id(), "result_size_limited", None)
+                .expect("registered operation and static diagnostic code");
+        }
+        Ok(value)
     }
 
     /// Runs `method` on the saved profile `call.profileID` with its current
@@ -584,8 +638,7 @@ fn engine_failure(code: &str, message: String) -> PluginError {
 pub(crate) fn credential_failure(error: SdkError) -> FunctionError {
     if error.code() == sdk_codes::CALL_CANCELLED {
         FunctionError::Cancelled
-    } else if error.code() == sdk_codes::NOT_NEGOTIATED || error.code().starts_with("plugin.host.")
-    {
+    } else if error.code().starts_with("plugin.host.") {
         PluginError::new(
             "database.credentialsUnavailable",
             format!(

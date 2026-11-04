@@ -1,0 +1,11 @@
+[package]
+name = "lithe-plugin-sdk"
+description = "Official SDK for Lithe plugin backends: plugin functions and host services over the LSP base protocol."
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+rust-version = "1.87"
+publish = false
+
+[dependencies]
+serde_json = "1"

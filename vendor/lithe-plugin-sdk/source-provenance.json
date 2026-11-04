@@ -1,0 +1,19 @@
+{
+  "repository": "https://github.com/Lithe-IDEA/lithe-plugin-docs",
+  "baseRevision": "29b245c0e1d77c761d9032a3144a301d1818bfc7",
+  "sourcePath": "sdk/rust/plugin-sdk",
+  "localChanges": "Uncommitted structured litheLogging v1 SDK implementation prepared with this plugin migration. Cargo manifest workspace fields resolved for a standalone source snapshot. This snapshot is not a published SDK revision.",
+  "files": {
+    "Cargo.toml": "e13404507b2ed388139c81960372e292cc10a90b4c0b016284a2bf3e4a3c5db0",
+    "LICENSE": "93ff573f89d32394501fcc82767e73b1824add861f088bbd3eec9e0afae20d21",
+    "src/backend.rs": "efea43279ab98186d874b8d2339874a9ead409ad31d9292453023a3d8f343a78",
+    "src/diagnostics.rs": "b60deef7a72f931312c8277c23850191e766068070f719250ccf191b32f9e344",
+    "src/error.rs": "bd7088b04b11b6bf86e8ac440e2da8b2e37b4eccb36bd2b5459c634cb190c76d",
+    "src/framing.rs": "5d61561b1e82d74cab39dbf5074a1f8e68f1ba93fea5a67990189cce9193a365",
+    "src/host.rs": "cd16fd48d96e0863d32ba997a4e4393e0bdc433d05ab8b87761bd7690a12bf50",
+    "src/lib.rs": "245d1c2b27d10e38ad879fbaf68efc9648516ffb8c40c4b22e5344cb14e4fe11",
+    "src/panic_boundary.rs": "ac41a053e9fc1f7996b154ced6424b2ab580780544505758a39f226b1c859905",
+    "src/protocol.rs": "38692d0cbffb01954e80a0eaf9fd337331ea5517f9e1121c36fb38faf181abd0",
+    "src/stdio.rs": "8ebda3d08a03438f926e49f48050faf90b9725e9338ee1742a0793ab0f5e2e0a"
+  }
+}

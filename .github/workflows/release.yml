@@ -43,7 +43,7 @@ jobs:
       - name: Build the package
         run: node scripts/package.mjs
       - name: Run the backend through Rust Core
-        run: node scripts/e2e.mjs
+        run: node scripts/e2e.mjs --source https://github.com/1lck/Lithe-IDEA.git --ref preview
       - name: Verify the archive users download
         run: |
           id=$(node -p "require('./plugin.json').id")

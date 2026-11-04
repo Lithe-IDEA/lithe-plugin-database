@@ -10,9 +10,8 @@ publish = false
 
 [workspace.dependencies]
 serde_json = "1"
-# The official SDK, pinned to a commit; Cargo.lock records it and
-# `cargo build --locked` refuses anything else.
-lithe-plugin-sdk = { git = "https://github.com/Lithe-IDEA/lithe-plugin-docs", rev = "5da0524f4751425c216bf5162c9fc1eb1dddd22f" }
+# The official SDK source snapshot and its verified provenance are vendored.
+lithe-plugin-sdk = { path = "../vendor/lithe-plugin-sdk" }
 
 [profile.release]
 lto = "thin"

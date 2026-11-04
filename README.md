@@ -85,8 +85,9 @@ cargo clippy --locked --manifest-path backend/Cargo.toml --all-targets -- -D war
 `--host-only` builds only this Mac's architecture. Install the folder or
 the zip in Lithe with **Install from Disk** to try it.
 
-`node scripts/e2e.mjs` runs `e2e/database_plugin.rs` against Lithe's Rust
-Core at the commit `e2e/lithe-core.json` pins: Core launches the packaged
+`node scripts/e2e.mjs --source <repository URL or path> --ref <revision>` runs
+`e2e/database_plugin.rs` against an explicit Lithe Core with `litheLogging` v1.
+Core launches the packaged
 backend as a host does, and the test answers its credential requests and
 drives a SQLite connection through every page function. `--source <path>`
 uses a local Lithe checkout instead of cloning.
@@ -112,3 +113,30 @@ otherwise.
 ## License
 
 Apache-2.0
+
+## 宿主日志接入
+
+后端使用官方 Rust SDK 的结构化 `lithe/log` 通知，协商
+`experimental.litheLogging` v1，不另建文件写入器、后台任务或 stderr 回退。
+macOS 宿主通过共享事件目录把后端事实写入会话通道
+`plugins/<plugin-id>/host.log`，统一决定级别、脱敏、限长、轮转和保留。
+stdout 保持协议帧专用；日志不写插件包或 app bundle，不影响签名和增量更新。
+
+每个函数的最终成功或失败只由 SDK 记录一次，携带注册函数 ID、单调耗时、稳定
+安全分类及宿主原始 operation ID；取消不当作失败。列表和历史抑制成功诊断；
+`database.call` 按已经验证的方法区分，metadata、分页浏览和探测只抑制当前调用的
+成功，显式查询和写入保留 INFO 终态，所有失败和真实降级继续记录。
+返回行因插件传输限额被裁剪时，`diagnostics().degraded` 在本次后端生命周期内
+记录一次 `result_size_limited`，重复裁剪保持静默。
+诊断不含 SQL、连接串、服务器地址、用户名、密码、返回行、配置内容或文件路径。
+通道建立前的启动失败通过进程退出码由宿主记录，不输出异步运行时错误正文。
+
+`vendor/lithe-plugin-sdk/` 为同批官方 SDK 源码快照，Cargo 只使用仓库相对路径。
+真实基线与逐文件 SHA-256 见 `source-provenance.json`，不伪造已发布版本或 Git SHA。
+插件不强制要求 `${logDir}`，也不保留旧日志兼容写入器；需要支持新日志协议的宿主
+负责结构化通知的展示和持久化。
+
+新的日志端到端验证要求 Core 已包含 `litheLogging` v1；`scripts/e2e.mjs` 必须显式传入
+`--source` 和 `--ref`，不再默认运行旧的 `e2e/lithe-core.json` 基线。CI 明确选择主仓
+`preview`，需要先合并宿主日志 API；跨仓发布时再把验证引用固定到合并后的精确提交。
+宿主改动未合并时这项检查会真实失败，不跳过，也不把旧协议运行当作新 API 验收。
